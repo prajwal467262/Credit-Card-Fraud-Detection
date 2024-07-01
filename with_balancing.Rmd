@@ -1,0 +1,1206 @@
+---
+title: "Untitled"
+author: "prajwal"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,warning = FALSE, message = FALSE)
+library(dplyr)
+library(summarytools)
+library(ggplot2)
+library(caret)
+library(pROC)
+library(corrplot)
+library(reshape2)
+data <- read.csv("C:/Users/prajw/OneDrive//Desktop/dissertation/creditcard.csv")
+```
+
+
+```{r}
+colnames(data)
+
+```
+```{r}
+head(data)
+```
+
+```{r}
+
+dfSummary(data)
+```
+
+
+```{r}
+table(data$Class)
+
+```
+
+```{r}
+no_frauds_percentage <- 100 * sum(data$Class == 0) / nrow(data)
+frauds_percentage <- 100 * sum(data$Class == 1) / nrow(data)
+
+cat("No Frauds: ", round(no_frauds_percentage, 2), "% of the dataset\n")
+cat("Frauds: ", round(frauds_percentage, 2), "% of the dataset\n")
+
+```
+```{r fig.height=5,fig.width=9}
+ggplot(data) +
+ aes(x = Time, fill = Class, colour = Class) +
+ geom_histogram(bins = 40L) +
+ scale_fill_gradient(low = "#0D0887", 
+ high = "#BFC530") +
+ scale_color_gradient(low = "#0D0887", high = "#BFC530") +
+ labs(title = "Time distribution based on class") +
+ ggthemes::theme_base() +
+ theme(legend.position = "none", plot.title = element_text(size = 18L, face = "bold")) +
+ facet_wrap(vars(Class), scales = "free")
+
+
+```
+
+```{r}
+
+
+Data <- data[,2:31]
+# Check for missing values
+any(is.na(Data))
+
+# Remove rows with missing values 
+Data <- na.omit(Data)
+
+```
+
+```{R}
+Data$Class <- as.factor(Data$Class)
+summarised_Data <- Data %>% 
+  group_by(Class) %>% 
+  summarise(amount_mean=mean(Amount),amount_median=median(Amount))
+summarised_Data <- melt(summarised_Data,id.vars = "Class",measure.vars = c("amount_mean","amount_median"))
+Reshaped_Data <- melt(Data,id.vars = "Class",measure.vars = colnames(Data)[c(-29,-30)])
+```
+
+```{r}
+Feature_data_summarised <- summarised_Data %>%
+  group_by(Class, variable) %>%
+  summarise(mean = mean(value), median = median(value))
+colnames(Feature_data_summarised) <- c("Class","Variable","stats","value")
+```
+
+```{r}
+ggplot(Data, aes(Amount, fill = Class)) +
+  geom_density(alpha = 0.5, col = "black") +
+  geom_vline(data = summarised_Data,
+             aes(colour = Class, linetype = variable, xintercept = value),
+             show.legend = FALSE) +
+  scale_fill_discrete(labels = c("Non-Fraud", "Fraud")) +
+  scale_linetype_discrete(labels = c(amount_mean = "mean", amount_median = "median")) +
+  scale_color_discrete(breaks = NULL) +
+  xlim(0, mean(Data$Amount) + 2 * sd(Data$Amount)) +
+  labs(linetype = "Stats",
+       title = "Density Distribution of Fraud and Non-Fraud") +
+  ylab("Frequency") +
+   theme_linedraw()
+```
+
+```{r fig.height=8,fig.width=8}
+ggplot(Reshaped_Data, aes(x = value,fill = Class))+
+  geom_density(alpha=0.5, col = "black")+
+  geom_vline(data = Feature_data_summarised,
+             aes(colour= Class,linetype= Variable,xintercept=value),
+             show.legend = FALSE)+
+  facet_wrap("variable",ncol = 4,nrow = 7,scales = "free_y")+
+  xlim(-5,5)+
+  scale_fill_discrete(labels=c("Non-Fraud","Fraud"))+
+  scale_color_discrete(breaks=NULL)+
+  labs(title = "Density Distribution For Each Feature")+
+    theme_minimal()
+
+
+```
+```{r}
+# Load the required libraries
+library(data.table)
+library(Rtsne)
+
+# Read the credit card data
+credit_data <- fread("C:/Users/prajw/OneDrive/Desktop/dissertation/creditcard.csv")
+# Convert the "Class" column to integer
+credit_data <- credit_data %>%
+  mutate(row_id = 1:nrow(credit_data)) %>%
+  mutate(Class = as.integer(Class))
+
+numeric_features <- c(paste0("V", 1:28), "Amount")
+
+# Remove rows with missing values in any column
+cleaned_data <- credit_data[apply(credit_data, 1, function(x) !any(is.na(x))), ]
+
+# Extract numeric features
+numeric_df <- credit_data[, ..numeric_features]
+
+# Normalize the numeric features
+normalized_df <- apply(numeric_df, MARGIN = 2, function(x) scale(x, center = TRUE, scale = TRUE))
+
+# Convert the normalized data back to a data frame
+normalized_df <- as.data.frame(normalized_df)
+
+# Combine the normalized data with 'row_id'
+normalized_df$row_id <- credit_data$row_id
+
+# Remove rows with missing values in the normalized data
+normalized_df <- normalized_df[apply(normalized_df, 1, function(x) !any(is.na(x))), ]
+
+# Subset data for fraudulent transactions
+fraudulent_data <- normalized_df %>%
+  semi_join(filter(credit_data, Class == 1), by = "row_id")
+
+# Sample 20,000 data points and merge with fraudulent transactions
+sampled_data <-  normalized_df %>% 
+  sample_n(20000) %>%
+  rbind(fraudulent_data)
+
+# Remove duplicate rows
+unique_data <- sampled_data[!duplicated(select(sampled_data, -row_id)),]
+
+# Perform t-SNE
+tsne_output <- Rtsne(as.matrix(select(unique_data, -row_id)), pca = FALSE, verbose = TRUE, theta = 0.3, max_iter = 1300, Y_init = NULL)
+# Extract t-SNE coordinates
+tsne_coordinates <- as.data.frame(tsne_output$Y) %>% 
+  cbind(select(unique_data, row_id)) %>% 
+  left_join(credit_data, by = 'row_id')
+
+
+```
+
+```{r}
+# Plotting
+fraud_plot <- ggplot() +
+  labs(title = "Visualizing Fraudulent Transactions \n (Sample Size: 10% of Data)") +
+  scale_fill_gradient(low = '#7a0177', high = '#fbb4b9') +
+  coord_fixed(ratio = 1) +
+  theme_void() +
+  stat_summary_hex(data = tsne_coordinates, aes(x = V1.x, y = V2.x, z = Class), bins = 10, fun = mean, alpha = 0.9) +
+  geom_point(data = filter(tsne_coordinates, Class == 0), aes(x = V1.x, y = V2.x), alpha = 0.3, size = 1, col = "darkgreen") +
+  geom_point(data = filter(tsne_coordinates, Class == 1), aes(x = V1.x, y = V2.x), alpha = 0.9, size = 0.3, col = "yellow") +
+  theme(plot.title = element_text(hjust = 0.5, family = "Helvetica"),
+        legend.text.align = 0.5)
+
+# Print the plot
+print(fraud_plot)
+
+
+```
+
+
+
+
+```{r fig.height=8,fig.width=14}
+
+# Calculate the correlation matrix
+correlation_matrix <- cor(data)
+
+
+# Print the correlation matrix
+print(correlation_matrix)
+
+corrplot(correlation_matrix)
+
+```
+```{r}
+
+data <- data[,2:31]
+# Check for missing values
+any(is.na(data$Amount))
+
+# Remove rows with infinite (inf) values in the "Amount" column
+data <- data[is.finite(data$Amount), ]
+
+# Standardization
+data$Amount<- scale(data$Amount)
+
+
+```
+
+```{r}
+
+# Set the random seed for reproducibility
+set.seed(123)
+
+# Print the distribution of classes
+cat("No Frauds:", sum(data$Class == 0), "samples\n")
+cat("Frauds:", sum(data$Class == 1), "samples\n")
+
+# Create separate data frames for fraud and non-fraud samples
+train_fraud_samples <- data[data$Class == 1, ]
+train_non_fraud_samples <- data[data$Class == 0, ]
+
+# Get an equal number of random non-fraud samples
+num_fraud_samples <- nrow(train_fraud_samples)
+train_non_fraud_samples <- train_non_fraud_samples[sample(1:nrow(train_non_fraud_samples), 4920), ]
+
+# Combine the balanced data
+balanced_data <- rbind(train_fraud_samples, train_non_fraud_samples)
+
+# Shuffle the data
+balanced_data <- balanced_data[sample(nrow(balanced_data)), ]
+
+# Create features (X_balanced) and labels (y_balanced)
+X_balanced <- balanced_data[, -ncol(balanced_data)]  # Exclude the 'Class' column
+y_balanced <- balanced_data$Class
+balanced_data$Amount <- as.numeric(balanced_data$Amount)
+
+# Check the distribution of labels
+cat("Label Distributions after Balancing: \n")
+cat("No Frauds:", sum(y_balanced == 0), "samples\n")
+cat("Frauds:", sum(y_balanced == 1), "samples\n")
+
+
+# Load necessary libraries
+library(ROSE)
+library(caret)
+
+# Perform SMOTE to balance the data
+balanced_data_smote <- ovun.sample(Class ~ ., data = balanced_data, seed = 123, p = 0.5, method = "over")$data
+
+# Check the distribution of labels after oversampling
+balanced_count_label <- table(balanced_data$Class) / nrow(balanced_data)
+cat("Label Distributions after SMOTE Oversampling: \n")
+print(balanced_count_label)
+
+```
+
+
+# Dtaa Splitting 
+
+```{r}
+# Set a seed for reproducibility
+set.seed(123)
+
+# Define the split ratio
+split_ratio <- 0.7  
+
+# Perform the data split after applying SMOTE
+splitIndex_balanced <- createDataPartition(balanced_data_smote$Class, p = split_ratio, list = FALSE)
+balanced_train_data <- balanced_data_smote[splitIndex_balanced, ]
+balanced_test_data <- balanced_data_smote[-splitIndex_balanced, ]
+
+
+
+```
+
+```{r}
+
+# Set a seed for reproducibility
+set.seed(123)
+
+# Perform the data split
+splitIndex <- createDataPartition(balanced_data$Class, 
+                                  p = split_ratio, 
+                                  list = FALSE)
+
+# Create the training and testing datasets
+train_data <- balanced_data[splitIndex, ]
+test_data <-balanced_data[-splitIndex, ]
+
+```
+
+
+# Logistic regresion
+
+
+```{r fig.height=6,fig.width=12}
+
+```
+
+```{r fig.height=6,fig.width=12}
+
+##without balancing
+
+# Fit a logistic regression model
+log_reg_model <- glm(Class ~ ., data = train_data, family = binomial(link = "logit"))
+
+# Make predictions on the test data
+log_reg_predictions <- predict(log_reg_model, newdata = test_data, type = "response")
+
+# Convert probabilities to class labels (0 or 1) based on a threshold
+threshold <- 0.2  
+log_reg_predictions <- ifelse(log_reg_predictions > threshold, 1, 0)
+
+print(log_reg_model)
+
+
+##with balancing
+
+
+# Fit a logistic regression model
+log_reg_model_bal <- glm(Class ~ ., data = balanced_train_data, family = binomial(link = "logit"))
+
+# Make predictions on the test data
+log_reg_predictions_bal <- predict(log_reg_model_bal, newdata = balanced_test_data, type = "response")
+
+# Convert probabilities to class labels (0 or 1) based on a threshold
+threshold <- 0.2 
+log_reg_predictions_bal <- ifelse(log_reg_predictions_bal > threshold, 1, 0)
+
+print(log_reg_model_bal)
+```
+
+
+```{r}
+##without balancing
+library(gmodels)
+
+test_data$Class <- as.factor(test_data$Class)
+
+# Create the confusion matrix
+confusion_matrix_lg <- confusionMatrix(as.factor(log_reg_predictions), test_data$Class)
+
+# Extract values from the confusion matrix
+tp <- confusion_matrix_lg$table[2, 2]  # True Positives
+fp <- confusion_matrix_lg$table[1, 2]  # False Positives
+fn <- confusion_matrix_lg$table[2, 1]  # False Negatives
+
+# Calculate precision, recall, and F1-Score
+precision <- tp / (tp + fp)
+recall <- tp / (tp + fn)
+f1_score <- 2 * (precision * recall) / (precision + recall)
+
+# Print the metrics
+print(confusion_matrix_lg)
+cat("Precision:", precision, "\n")
+cat("Recall (Sensitivity):", recall, "\n")
+cat("F1-Score:", f1_score, "\n")
+
+confusion_matrix_melted <- as.data.frame(as.table(confusion_matrix_lg))
+
+
+
+##with balancing
+
+balanced_test_data$Class <- as.factor(balanced_test_data$Class)
+
+# Create the confusion matrix
+confusion_matrix_lg_bal <- confusionMatrix(as.factor(log_reg_predictions_bal), balanced_test_data$Class)
+
+# Extract values from the confusion matrix
+tp <- confusion_matrix_lg_bal$table[2, 2]  # True Positives
+fp <- confusion_matrix_lg_bal$table[1, 2]  # False Positives
+fn <- confusion_matrix_lg_bal$table[2, 1]  # False Negatives
+
+# Calculate precision, recall, and F1-Score
+precision <- tp / (tp + fp)
+recall <- tp / (tp + fn)
+f1_score <- 2 * (precision * recall) / (precision + recall)
+
+# Print the metrics
+print(confusion_matrix_lg_bal)
+cat("Precision:", precision, "\n")
+cat("Recall (Sensitivity):", recall, "\n")
+cat("F1-Score:", f1_score, "\n")
+
+confusion_matrix_melted_bal <- as.data.frame(as.table(confusion_matrix_lg_bal))
+
+```
+
+
+```{r}
+#plot the graph
+ggplot(confusion_matrix_melted, aes(Prediction,Reference, fill= Freq)) +
+        geom_tile() + geom_text(aes(label=Freq)) +
+        scale_fill_gradient(low="white", high="#009194") +
+        labs(x = "Reference",y = "Prediction") 
+
+#plot the graph
+ggplot(confusion_matrix_melted_bal, aes(Prediction,Reference, fill= Freq)) +
+        geom_tile() + geom_text(aes(label=Freq)) +
+        scale_fill_gradient(low="white", high="#009194") +
+        labs(x = "Reference",y = "Prediction") 
+
+```
+
+
+```{r}
+
+# Add the predicted probabilities to the new data frame
+test_data$Predicted_Probabilities <- log_reg_predictions
+
+
+# Add the predicted probabilities to the new data frame
+balanced_test_data$Predicted_Probabilities <- log_reg_predictions_bal
+```
+
+```{r fig.height=6,fig.width=6}
+par(mfrow = c(2,2))
+plot(log_reg_model)
+plot(log_reg_model_bal)
+```
+
+
+
+```{r fig.width=8,fig.height=4}
+par(mfrow = c(1, 2))
+
+
+# Generate ROC curve for test_data and log_reg_predictions
+roc_curve <- roc(test_data$Class, log_reg_predictions,plotit=TRUE)
+
+# Plot ROC curve with title
+plot(roc_curve, main = "ROC Curve - Model 1")
+
+# Generate ROC curve for balanced_test_data and log_reg_predictions_bal
+roc_curve_bal <- roc(balanced_test_data$Class, log_reg_predictions_bal,plotit=TRUE)
+
+# Plot ROC curve for balanced data with title
+plot(roc_curve_bal, main = "ROC Curve - Model 2")
+
+roc_curve_bal
+```
+
+
+```{r}
+
+# Set up cross-validation parameters
+ctrl_lr <- trainControl(method = "cv", number = 5)  # 5-fold cross-validation
+
+# Perform cross-validation
+lr_cv_results <- train(Class ~ ., data = train_data, method = "glm", family = binomial(), trControl = ctrl_lr)
+
+# Print cross-validation results
+print(lr_cv_results)
+
+
+# Set up cross-validation parameters
+ctrl_lr_bal <- trainControl(method = "cv", number = 5)  # 5-fold cross-validation
+
+# Perform cross-validation
+lr_bal_cv_results <- train(Class ~ ., data = balanced_train_data, method = "glm", family = binomial(), trControl = ctrl_lr_bal)
+
+# Print cross-validation results
+print(lr_bal_cv_results)
+
+```
+
+
+# Decision tree classifier
+
+```{r}
+## without balancing
+
+# Fit a decision tree model
+library(rpart)
+
+# Fit a decision tree model
+decision_tree_model <- rpart(Class ~ ., data = train_data, method = "class")
+
+# View the decision tree
+printcp(decision_tree_model)
+
+# Make predictions on the test data
+decision_tree_predictions <- predict(decision_tree_model, test_data, type = "class")
+
+
+
+##with balancing
+
+
+# Fit a decision tree model
+decision_tree_model_bal <- rpart(Class ~ ., data = balanced_train_data, method = "class")
+
+# View the decision tree
+printcp(decision_tree_model_bal)
+
+# Make predictions on the test data
+decision_tree_predictions_bal <- predict(decision_tree_model_bal, balanced_test_data, type = "class")
+
+```
+
+```{r}
+# Evaluate the decision tree model
+confusion_matrix_dt <- confusionMatrix(as.factor(decision_tree_predictions), as.factor(test_data$Class))
+# Extract values from the confusion matrix
+tp <- confusion_matrix_dt$table[2, 2]  # True Positives
+fp <- confusion_matrix_dt$table[1, 2]  # False Positives
+fn <- confusion_matrix_dt$table[2, 1]  # False Negatives
+
+# Calculate precision, recall, and F1-Score
+precision <- tp / (tp + fp)
+recall <- tp / (tp + fn)
+f1_score <- 2 * (precision * recall) / (precision + recall)
+
+confusion_matrix_dt
+# Print the metrics
+cat("Precision:", precision, "\n")
+cat("Recall (Sensitivity):", recall, "\n")
+cat("F1-Score:", f1_score, "\n")
+
+
+
+
+# Evaluate the decision tree model
+confusion_matrix_dt_bal <- confusionMatrix(as.factor(decision_tree_predictions_bal), as.factor(balanced_test_data$Class))
+# Extract values from the confusion matrix
+tp <- confusion_matrix_dt_bal$table[2, 2]  # True Positives
+fp <- confusion_matrix_dt_bal$table[1, 2]  # False Positives
+fn <- confusion_matrix_dt_bal$table[2, 1]  # False Negatives
+
+# Calculate precision, recall, and F1-Score
+precision <- tp / (tp + fp)
+recall <- tp / (tp + fn)
+f1_score <- 2 * (precision * recall) / (precision + recall)
+
+confusion_matrix_dt_bal
+# Print the metrics
+cat("Precision:", precision, "\n")
+cat("Recall (Sensitivity):", recall, "\n")
+cat("F1-Score:", f1_score, "\n")
+
+```
+
+```{r}
+par(mfrow = c(1, 2))
+# load the rpart.plot package
+library(rpart.plot)
+
+# Plot the decision tree
+rpart.plot(decision_tree_model, box.palette = "auto")
+
+# Plot the decision tree
+rpart.plot(decision_tree_model_bal, box.palette = "auto")
+
+```
+
+```{r}
+par(mfrow = c(1, 2))
+confusion_matrix_melted1 <- as.data.frame(as.table(confusion_matrix_dt))
+
+ggplot(confusion_matrix_melted1, aes(Prediction,Reference, fill= Freq)) +
+        geom_tile() + geom_text(aes(label=Freq)) +
+        scale_fill_gradient(low="#ffffcc", high="#238443") +
+        labs(x = "Reference",y = "Prediction") 
+
+confusion_matrix_melted1_bal <- as.data.frame(as.table(confusion_matrix_dt_bal))
+
+ggplot(confusion_matrix_melted1_bal, aes(Prediction,Reference, fill= Freq)) +
+        geom_tile() + geom_text(aes(label=Freq)) +
+        scale_fill_gradient(low="#ffffcc", high="#238443") +
+        labs(x = "Reference",y = "Prediction") 
+
+
+
+```
+
+```{r}
+# Set up cross-validation parameters
+ctrl_dt <- trainControl(method = "cv", number = 5)  # 5-fold cross-validation
+
+# Perform cross-validation with decision tree
+dt_cv_results <- train(Class ~ ., data = train_data, method = "rpart", trControl = ctrl_dt)
+
+# Print cross-validation results
+print(dt_cv_results)
+
+
+# Set up cross-validation parameters
+ctrl_dt_bal <- trainControl(method = "cv", number = 5)  # 5-fold cross-validation
+
+# Perform cross-validation with decision tree
+dt_cv_results_bal <- train(Class ~ ., data = balanced_train_data, method = "rpart", trControl = ctrl_dt_bal)
+
+# Print cross-validation results
+print(dt_cv_results_bal)
+```
+```{r}
+plot(dt_cv_results)
+plot(dt_cv_results_bal)
+```
+
+```{r}
+library(pROC)
+par(mfrow = c(1, 2))
+roc.curve(test_data$Class, decision_tree_predictions, plotit = TRUE,main = "ROC Curve - Model 1")
+
+roc.curve(balanced_test_data$Class, decision_tree_predictions_bal, plotit = TRUE,main = "ROC Curve - Model 2")
+```
+
+
+# Random forest classifier
+
+```{r fig.height=8,fig.width=12}
+par(mfrow = c(1, 2))
+##without balancing 
+
+
+# Load the necessary library
+library(randomForest)
+
+# Train a Random Forest classifier
+random_forest_model <- randomForest(Class ~ ., data = train_data)
+
+# Make binary predictions on the test data 
+random_forest_probabilities <- predict(random_forest_model, newdata = test_data, type = "response")
+threshold <- 0.1  
+random_forest_predictions <- ifelse(random_forest_probabilities > threshold, 1, 0)
+
+random_forest_model
+##with balancing
+
+# Train a Random Forest classifier
+random_forest_model_bal <- randomForest(Class ~ ., data = balanced_train_data)
+
+# Make binary predictions on the test data 
+random_forest_probabilities_bal <- predict(random_forest_model_bal, newdata = balanced_test_data, type = "response")
+threshold <- 0.2  
+random_forest_predictions_bal <- ifelse(random_forest_probabilities_bal > threshold, 1, 0)
+
+
+random_forest_model
+random_forest_model_bal
+```
+
+
+```{r}
+par(mfrow = c(1, 2))
+test_data$Class <- as.factor(test_data$Class)
+
+# Evaluate the Random Forest model
+random_forest_accuracy <- confusionMatrix(as.factor(random_forest_predictions), test_data$Class)
+
+# Calculate confusion matrix
+confusion_matrix_rf <- table(Actual = test_data$Class, Predicted = random_forest_predictions)
+
+# Calculate precision, recall, and F1-score
+tp <- confusion_matrix_rf[2, 2]  # True Positives
+fp <- confusion_matrix_rf[1, 2]  # False Positives
+fn <- confusion_matrix_rf[2, 1]  # False Negatives
+
+precision <- tp / (tp + fp)
+recall <- tp / (tp + fn)
+f1_score <- 2 * (precision * recall) / (precision + recall)
+
+print(random_forest_accuracy)
+cat("Precision:", precision, "\n")
+cat("Recall:", recall, "\n")
+cat("F1-Score:", f1_score, "\n")
+
+plot(random_forest_model)
+# Plot variable importance
+varImpPlot(random_forest_model)
+
+
+balanced_test_data$Class <- as.factor(balanced_test_data$Class)
+
+# Evaluate the Random Forest model
+random_forest_accuracy_bal <- confusionMatrix(as.factor(random_forest_predictions_bal), balanced_test_data$Class)
+
+# Calculate confusion matrix
+confusion_matrix_rf_bal <- table(Actual =balanced_test_data$Class, Predicted = random_forest_predictions_bal)
+
+# Calculate precision, recall, and F1-score
+tp <- confusion_matrix_rf_bal[2, 2]  # True Positives
+fp <- confusion_matrix_rf_bal[1, 2]  # False Positives
+fn <- confusion_matrix_rf_bal[2, 1]  # False Negatives
+
+precision <- tp / (tp + fp)
+recall <- tp / (tp + fn)
+f1_score <- 2 * (precision * recall) / (precision + recall)
+
+print(random_forest_accuracy_bal)
+cat("Precision:", precision, "\n")
+cat("Recall:", recall, "\n")
+cat("F1-Score:", f1_score, "\n")
+
+plot(random_forest_model_bal)
+# Plot variable importance
+varImpPlot(random_forest_model_bal)
+```
+
+```{r}
+# Create a data frame for the evaluation metrics
+metrics <- data.frame(Metric = c("Precision", "Recall", "F1-Score"),
+                      Score = c(precision, recall, f1_score))
+
+
+
+ggplot(metrics) +
+ aes(x = Metric, fill = Score, weight = Score) +
+ geom_bar() +
+ scale_fill_viridis_c(option = "magma", 
+ direction = 1) +
+ labs(title = "Random Forest Model Evaluation") +
+ theme_linedraw() +
+ theme(plot.title = element_text(size = 18L, 
+ face = "bold"))
+
+
+```
+
+```{r}
+par(mfrow = c(1, 2))
+# Show the plot
+roc.curve(test_data$Class, random_forest_predictions, plotit = TRUE,main="ROC Curve - Model 1")
+
+# Show the plot
+roc.curve(balanced_test_data$Class, random_forest_predictions_bal, plotit = TRUE,main="ROC Curve - Model 2")
+
+```
+```{r}
+
+ggplot() +
+  geom_tile(data = as.data.frame(confusion_matrix_rf), aes(x = Actual, y = Predicted, fill = Freq)) +
+  geom_text(data = as.data.frame(confusion_matrix_rf), aes(x = Actual, y = Predicted, label = Freq), vjust = 1) +
+  scale_fill_gradient(low = "#9ecae1", high = "#084594") +
+  labs(title = "Confusion Matrix for UnBalanced Random Forest Model", x = "Actual", y = "Predicted") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45))
+
+ggplot() +
+  geom_tile(data = as.data.frame(confusion_matrix_rf_bal), aes(x = Actual, y = Predicted, fill = Freq)) +
+  geom_text(data = as.data.frame(confusion_matrix_rf_bal), aes(x = Actual, y = Predicted, label = Freq), vjust = 1) +
+  scale_fill_gradient(low = "#9ecae1", high = "#084594") +
+  labs(title = "Confusion Matrix for Balanced Random Forest Model", x = "Actual", y = "Predicted") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45))
+```
+
+```{r}
+# Set up cross-validation parameters for Random Forest
+ctrl_rf <- trainControl(method = "cv", number = 5)  # 5-fold cross-validation
+
+# Perform cross-validation with Random Forest
+rf_cv_results <- train(Class ~ ., data = train_data, method = "rf", trControl = ctrl_rf)
+
+# Print cross-validation results for Random Forest
+print(rf_cv_results)
+
+# Set up cross-validation parameters for Random Forest with balanced data
+ctrl_rf_bal <- trainControl(method = "cv", number = 5)  # 5-fold cross-validation
+
+# Perform cross-validation with Random Forest using balanced data
+rf_cv_results_bal <- train(Class ~ ., data = balanced_train_data, method = "rf", trControl = ctrl_rf_bal)
+
+# Print cross-validation results for Random Forest with balanced data
+print(rf_cv_results_bal)
+
+```
+```{r}
+plot(rf_cv_results)
+plot(rf_cv_results_bal)
+```
+
+# SVM
+
+
+```{r}
+# Load the necessary library
+library(e1071)
+
+# Train an SVM classifier
+svm_model <- svm(Class ~ ., data = train_data, kernel = "radial", probability = TRUE)
+
+# Make binary predictions on the test data 
+svm_probabilities <- predict(svm_model, newdata = test_data, probability = TRUE)
+threshold <- 0.1  
+svm_predictions <- ifelse(svm_probabilities> threshold, 1, 0)
+
+# Train an SVM classifier
+svm_model_bal <- svm(Class ~ ., data =balanced_train_data, kernel = "radial", probability = TRUE)
+
+# Make binary predictions on the test data 
+svm_probabilities_bal <- predict(svm_model_bal, newdata =balanced_test_data, probability = TRUE)
+threshold <- 0.2 
+svm_predictions_bal <- ifelse(svm_probabilities_bal> threshold, 1, 0)
+
+svm_model
+
+svm_model_bal
+
+
+```
+
+
+
+```{r}
+
+##without balancing 
+
+
+
+test_data$Class <- as.factor(test_data$Class)
+
+# Evaluate the SVM model
+svm_accuracy <- confusionMatrix(as.factor(svm_predictions), test_data$Class)
+
+# Calculate confusion matrix
+confusion_matrix_svm <- table(Actual = test_data$Class, Predicted = svm_predictions)
+
+# Calculate precision, recall, and F1-score
+tp <- confusion_matrix_svm[2, 2]  # True Positives
+fp <- confusion_matrix_svm[1, 2]  # False Positives
+fn <- confusion_matrix_svm[2, 1]  # False Negatives
+
+precision <- tp / (tp + fp)
+recall <- tp / (tp + fn)
+f1_score <- 2 * (precision * recall) / (precision + recall)
+
+print(svm_accuracy)
+cat("Precision:", precision, "\n")
+cat("Recall:", recall, "\n")
+cat("F1-Score:", f1_score, "\n")
+
+
+
+##with balancing 
+
+
+balanced_test_data$Class <- as.factor(balanced_test_data$Class)
+
+# Evaluate the SVM model
+svm_accuracy_bal <- confusionMatrix(as.factor(svm_predictions_bal), balanced_test_data$Class)
+
+# Calculate confusion matrix
+confusion_matrix_svm_bal <- table(Actual = balanced_test_data$Class, Predicted = svm_predictions_bal)
+
+# Calculate precision, recall, and F1-score
+tp <- confusion_matrix_svm_bal[2, 2]  # True Positives
+fp <- confusion_matrix_svm_bal[1, 2]  # False Positives
+fn <- confusion_matrix_svm_bal[2, 1]  # False Negatives
+
+precision <- tp / (tp + fp)
+recall <- tp / (tp + fn)
+f1_score <- 2 * (precision * recall) / (precision + recall)
+
+print(svm_accuracy_bal)
+cat("Precision:", precision, "\n")
+cat("Recall:", recall, "\n")
+cat("F1-Score:", f1_score, "\n")
+
+
+
+```
+
+```{r}
+library(gridExtra)
+a <- ggplot() +
+  geom_tile(data = as.data.frame(confusion_matrix_svm), aes(x = Actual, y = Predicted, fill = Freq)) +
+  geom_text(data = as.data.frame(confusion_matrix_svm), aes(x = Actual, y = Predicted, label = Freq), vjust = 1) +
+  scale_fill_gradient(low = "#fff5eb", high = "#7f2704") +
+  labs(title = "Confusion Matrix for SVM Model", x = "Actual", y = "Predicted") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45))
+
+b <- ggplot() +
+  geom_tile(data = as.data.frame(confusion_matrix_svm_bal), aes(x = Actual, y = Predicted, fill = Freq)) +
+  geom_text(data = as.data.frame(confusion_matrix_svm_bal), aes(x = Actual, y = Predicted, label = Freq), vjust = 1) +
+  scale_fill_gradient(low = "#fff5eb", high = "#7f2704") +
+  labs(title = "Confusion Matrix for SVM Model", x = "Actual", y = "Predicted") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45))
+
+grid.arrange(a, b, ncol = 2)
+```
+```{r}
+par(mfrow = c(1, 2))
+roc.curve(test_data$Class, svm_predictions, plotit = TRUE,main='ROC Curve - Model 1')
+
+roc.curve(balanced_test_data$Class, svm_predictions_bal, plotit = TRUE,main='ROC Curve - Model 2')
+```
+
+```{r}
+# Set up cross-validation parameters
+ctrl_svm <- trainControl(method = "cv", number = 5)  # 5-fold cross-validation
+
+# Perform cross-validation with SVM
+svm_cv_results <- train(Class ~ ., data = train_data, method = "svmRadial", trControl = ctrl_svm)
+
+# Print cross-validation results
+print(svm_cv_results)
+
+
+
+# Set up cross-validation parameters
+ctrl_svm_bal <- trainControl(method = "cv", number = 5)  # 5-fold cross-validation
+
+# Perform cross-validation with SVM
+svm_cv_results_bal <- train(Class ~ ., data = balanced_train_data, method = "svmRadial", trControl = ctrl_svm_bal)
+
+# Print cross-validation results
+print(svm_cv_results_bal)
+
+```
+
+```{r}
+plot(svm_cv_results)
+plot(svm_cv_results_bal)
+```
+
+
+
+#knn
+
+```{r}
+
+train_labels <- train_data$Class 
+# Load the necessary library
+library(class)
+
+# Train a KNN classifier
+knn_model <- knn(train = train_data[,-30], test = test_data[,c(-30,-31)], cl = train_labels, k = 5)
+
+
+
+train_labels_bal <- balanced_train_data$Class 
+
+# Train a KNN classifier
+knn_model_bal <- knn(train = balanced_train_data[,-30], test = balanced_test_data[,c(-30,-31)], cl = train_labels_bal, k = 5)
+
+
+knn_model
+
+knn_model_bal
+
+```
+
+```{r}
+test_data$Class <- as.factor(test_data$Class)
+
+# Evaluate the KNN model
+knn_accuracy <- confusionMatrix(knn_model, test_data$Class)
+
+# Calculate confusion matrix
+confusion_matrix_knn <- table(Actual = test_data$Class, Predicted = knn_model)
+
+# Calculate precision, recall, and F1-score
+tp <- confusion_matrix_knn[2, 2]  # True Positives
+fp <- confusion_matrix_knn[1, 2]  # False Positives
+fn <- confusion_matrix_knn[2, 1]  # False Negatives
+
+precision <- tp / (tp + fp)
+recall <- tp / (tp + fn)
+f1_score <- 2 * (precision * recall) / (precision + recall)
+
+print(knn_accuracy)
+cat("Precision:", precision, "\n")
+cat("Recall:", recall, "\n")
+cat("F1-Score:", f1_score, "\n")
+
+
+
+balanced_test_data$Class <- as.factor(balanced_test_data$Class)
+
+# Evaluate the KNN model
+knn_accuracy_bal <- confusionMatrix(knn_model_bal, balanced_test_data$Class)
+
+# Calculate confusion matrix
+confusion_matrix_knn_bal <- table(Actual = balanced_test_data$Class, Predicted = knn_model_bal)
+
+# Calculate precision, recall, and F1-score
+tp <- confusion_matrix_knn_bal[2, 2]  # True Positives
+fp <- confusion_matrix_knn_bal[1, 2]  # False Positives
+fn <- confusion_matrix_knn_bal[2, 1]  # False Negatives
+
+precision <- tp / (tp + fp)
+recall <- tp / (tp + fn)
+f1_score <- 2 * (precision * recall) / (precision + recall)
+
+print(knn_accuracy_bal)
+cat("Precision:", precision, "\n")
+cat("Recall:", recall, "\n")
+cat("F1-Score:", f1_score, "\n")
+
+
+```
+
+```{r}
+ggplot() +
+  geom_tile(data = as.data.frame(confusion_matrix_knn), aes(x = Actual, y = Predicted, fill = Freq)) +
+  geom_text(data = as.data.frame(confusion_matrix_knn), aes(x = Actual, y = Predicted, label = Freq), vjust = 1) +
+  scale_fill_gradient(low = "#f7f4f9", high = "#ce1256") +
+  labs(title = "Confusion Matrix for SVM Model", x = "Actual", y = "Predicted") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45))
+
+ggplot() +
+  geom_tile(data = as.data.frame(confusion_matrix_knn_bal), aes(x = Actual, y = Predicted, fill = Freq)) +
+  geom_text(data = as.data.frame(confusion_matrix_knn_bal), aes(x = Actual, y = Predicted, label = Freq), vjust = 1) +
+  scale_fill_gradient(low = "#f7f4f9", high = "#ce1256") +
+  labs(title = "Confusion Matrix for SVM Model", x = "Actual", y = "Predicted") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45))
+```
+
+```{r}
+par(mfrow = c(1, 2))
+roc.curve(test_data$Class, knn_model, plotit = TRUE,main='ROC Curve - Model 1')
+
+roc.curve(balanced_test_data$Class, knn_model_bal, plotit = TRUE,main='ROC Curve - Model 2')
+```
+
+```{r}
+# Set up cross-validation parameters
+ctrl_knn <- trainControl(method = "cv", number = 5)  # 5-fold cross-validation
+
+# Perform cross-validation with kNN
+knn_cv_results <- train(Class ~ ., data = train_data, method = "knn", trControl = ctrl_knn)
+
+# Print cross-validation results
+print(knn_cv_results)
+
+
+# Set up cross-validation parameters
+ctrl_knn_bal <- trainControl(method = "cv", number = 5)  # 5-fold cross-validation
+
+# Perform cross-validation with kNN
+knn_cv_results_bal <- train(Class ~ ., data = balanced_train_data, method = "knn", trControl = ctrl_knn_bal)
+
+# Print cross-validation results
+print(knn_cv_results_bal)
+
+
+```
+
+```{r}
+plot(knn_cv_results,main='Model 1')
+plot(knn_cv_results_bal,main='Model 2')
+
+```
+
+
+```{r}
+library(Metrics)
+
+# Define the confusion matrices
+conf_matrix_1 <- matrix(c(1452, 19, 13, 139), nrow = 2, byrow = TRUE)
+conf_matrix_2 <- matrix(c(1470, 1, 24, 128), nrow = 2, byrow = TRUE)
+conf_matrix_3 <- matrix(c(1395, 76, 9, 143), nrow = 2, byrow = TRUE)
+conf_matrix_4 <- matrix(c(1424, 47, 14, 138), nrow = 2, byrow = TRUE)
+conf_matrix_5 <- matrix(c(1470, 1, 20, 132), nrow = 2, byrow = TRUE)
+
+# Calculate accuracy values from the confusion matrices
+accuracy_values <- c(conf_matrix_1[1, 1] / sum(conf_matrix_1[1, ]), 
+                     conf_matrix_2[1, 1] / sum(conf_matrix_2[1, ]), 
+                     conf_matrix_3[1, 1] / sum(conf_matrix_3[1, ]), 
+                     conf_matrix_4[1, 1] / sum(conf_matrix_4[1, ]), 
+                     conf_matrix_5[1, 1] / sum(conf_matrix_5[1, ]))
+
+# Display the accuracy values
+accuracy_values
+
+
+# Define the models
+models <- c("Log Regression", "Decision Tree", "Random Forest", "SVM", "KNN")
+
+# Creating a data frame with model names and accuracy values
+models_accuracy <- data.frame(Model = models, Accuracy = accuracy_values)
+
+
+ggplot(models_accuracy) +
+ aes(x = Model, y = Accuracy, fill = Accuracy, colour = Accuracy) +
+ geom_col() +
+  geom_text(aes(label = round(Accuracy, 3)), vjust = -0.5, size = 3) +
+ scale_fill_gradient() +
+ scale_color_gradient() +
+ labs(subtitle = "Accuracy Comparison of Models on Imbalanced Data") +
+ theme_bw()
+
+```
+
+```{r}
+library(ggplot2)
+
+# Creating a dataframe with model names and their performance metrics
+models <- c("Logistic Regression", "Decision Tree", "Random Forest", "SVM", "KNN")
+precision <- c(0.9144737, 0.8421053, 0.652968, 0.7459459, 0.9924812)
+recall <- c(0.8797468, 0.9922481, 0.9407895, 0.9078947, 0.8684211)
+f1_score <- c(0.8967742, 0.911032, 0.7708895, 0.8189911, 0.9263158)
+
+df <- data.frame(Model = models, Precision = precision, Recall = recall, F1_Score = f1_score)
+
+# Melt the data for plotting with ggplot
+library(reshape2)
+data_melted <- melt(df, id.vars = "Model")
+
+
+# Plotting line graph
+ggplot(data_melted, aes(x = variable , y = value, color =Model, group = Model)) +
+  geom_line(size=0.3) +
+  geom_point() +
+  labs(title = "Performance Metrics of Different Models on Imbalanced Data",
+       y = "Score", x = "Models", color = "Metrics") +
+  theme_gray() +
+  theme(axis.text.x = element_text(hjust = 1))
+  
+
+```
+
+```{r}
+# Store accuracy values
+accuracy_values_bal <- c( 0.938,  0.9291,  0.9898,  0.9594, 0.9778)
+
+# Display accuracy values
+accuracy_values_bal
+
+models_accuracy_bal <- data.frame(Model = models, Accuracy = accuracy_values_bal)
+
+
+
+library(ggplot2)
+
+ggplot(models_accuracy_bal) +
+ aes(x = Model, y = Accuracy, fill = Accuracy, colour = Accuracy) +
+ geom_col() +
+   geom_text(aes(label = round(Accuracy, 3)), vjust = -0.5, size = 3,color = "black") +
+ scale_fill_distiller(palette = "PuRd", direction = 1) +
+ scale_color_distiller(palette = "PuRd", direction = 1) +
+ labs(subtitle = "Accuracy Comparison of Models on Balanced Data") +
+ theme_bw()
+
+
+
+
+```
+
+```{r}
+
+# Creating vectors for precision, recall, and F1-score for each model
+precision <- c(0.972584, 0.885538, 0.9798522, 0.9484605, 0.9585526)
+recall <- c(0.9090327, 0.9692423, 1, 0.9712132, 0.9986292)
+f1_score <- c(0.9397351, 0.9255014, 0.9898236, 0.959702, 0.9781806)
+df1 <- data.frame(Model = models, Precision = precision, Recall = recall, F1_Score = f1_score)
+
+# Melt the data for plotting with ggplot
+library(reshape2)
+data_melted1 <- melt(df1, id.vars = "Model")
+
+# Plotting line graph
+ggplot(data_melted1, aes(x = variable , y = value, color =Model, group = Model)) +
+  geom_line(size=0.3) +
+  geom_point() +
+  labs(title = "Performance Metrics of Different Models on Balanced Data",
+       y = "Score", x = "Models", color = "Metrics") +
+  theme_gray() +
+  theme(axis.text.x = element_text(hjust = 1))
+  
+```
+
+```{r}
+
+confusion_matrix_lg
+confusion_matrix_dt
+random_forest_accuracy
+svm_accuracy
+knn_accuracy
+
+
+
+```
+
+```{r}
+confusion_matrix_lg_bal
+confusion_matrix_dt_bal
+random_forest_accuracy_bal
+svm_accuracy_bal
+knn_accuracy_bal
+```
