@@ -273,7 +273,7 @@ print(balanced_count_label)
 ```
 
 
-# Dtaa Splitting 
+# Data Splitting 
 
 ```{r}
 # Set a seed for reproducibility
